@@ -12,6 +12,14 @@ const prices = {
 
 app.use(express.json({ limit: "1mb" }));
 
+function getStripe() {
+  if (!process.env.STRIPE_SECRET_KEY) {
+    throw new Error("Payments not connected");
+  }
+
+  return new Stripe(process.env.STRIPE_SECRET_KEY);
+}
+
 app.get("/", (req, res) => {
   res.json({
     ok: true,
@@ -29,7 +37,7 @@ app.get("/health", (req, res) => {
 });
 
 /*
- * CREATE STRIPE CHECKOUT
+ * CREATE CHECKOUT
  */
 app.post("/api/checkout", async (req, res) => {
   try {
@@ -52,15 +60,7 @@ app.post("/api/checkout", async (req, res) => {
       });
     }
 
-    if (!process.env.STRIPE_SECRET_KEY) {
-      return res.status(503).json({
-        error: "Payments not connected",
-      });
-    }
-
-    const stripe = new Stripe(
-      process.env.STRIPE_SECRET_KEY
-    );
+    const stripe = getStripe();
 
     const site =
       process.env.PUBLIC_SITE_URL ||
@@ -76,7 +76,6 @@ app.post("/api/checkout", async (req, res) => {
           {
             price_data: {
               currency: "usd",
-
               unit_amount: prices[pkg],
 
               product_data: {
@@ -123,91 +122,64 @@ app.post("/api/checkout", async (req, res) => {
 });
 
 /*
- * VERIFY STRIPE PAYMENT
- *
- * The browser never decides whether an order
- * was paid. We ask Stripe directly.
+ * VERIFY PAYMENT
  */
-app.post(
-  "/api/checkout/verify",
-  async (req, res) => {
-    try {
-      const { sessionId } = req.body || {};
+app.post("/api/checkout/verify", async (req, res) => {
+  try {
+    const { sessionId } = req.body || {};
 
-      if (
-        typeof sessionId !== "string" ||
-        !sessionId.startsWith("cs_")
-      ) {
-        return res.status(400).json({
-          error: "Invalid checkout session",
-        });
-      }
-
-      if (!process.env.STRIPE_SECRET_KEY) {
-        return res.status(503).json({
-          error: "Payments not connected",
-        });
-      }
-
-      const stripe = new Stripe(
-        process.env.STRIPE_SECRET_KEY
-      );
-
-      const session =
-        await stripe.checkout.sessions.retrieve(
-          sessionId
-        );
-
-      const paid =
-        session.payment_status === "paid";
-
-      res.json({
-        paid,
-        orderId:
-          session.metadata?.orderId || null,
-        token:
-          session.metadata?.token || null,
-        package:
-          session.metadata?.package || null,
-      });
-    } catch (error) {
-      console.error(
-        "Stripe verification error:",
-        error
-      );
-
-      res.status(500).json({
-        error: "Could not verify payment",
+    if (
+      typeof sessionId !== "string" ||
+      !sessionId.startsWith("cs_")
+    ) {
+      return res.status(400).json({
+        error: "Invalid checkout session",
       });
     }
+
+    const stripe = getStripe();
+
+    const session =
+      await stripe.checkout.sessions.retrieve(
+        sessionId
+      );
+
+    res.json({
+      paid: session.payment_status === "paid",
+
+      orderId:
+        session.metadata?.orderId || null,
+
+      token:
+        session.metadata?.token || null,
+
+      package:
+        session.metadata?.package || null,
+    });
+  } catch (error) {
+    console.error(
+      "Stripe verification error:",
+      error
+    );
+
+    res.status(500).json({
+      error: "Could not verify payment",
+    });
   }
-);
+});
 
 /*
- * GENERATE MUSIC
+ * GENERATE SONG
  *
- * Protected so customers cannot directly burn
- * through the ElevenLabs account.
+ * A valid PAID Stripe Checkout Session
+ * is required before ElevenLabs is called.
  */
 app.post("/api/music", async (req, res) => {
   try {
-    if (
-      !process.env.INTERNAL_API_KEY ||
-      req.get("x-internal-key") !==
-        process.env.INTERNAL_API_KEY
-    ) {
-      return res.status(401).json({
-        error: "Unauthorized",
-      });
-    }
-
-    if (!process.env.ELEVENLABS_API_KEY) {
-      return res.status(503).json({
-        error: "Music not connected",
-      });
-    }
-
-    const { prompt } = req.body || {};
+    const {
+      prompt,
+      sessionId,
+    } = req.body || {};
 
     if (
       typeof prompt !== "string" ||
@@ -218,6 +190,47 @@ app.post("/api/music", async (req, res) => {
       });
     }
 
+    if (
+      typeof sessionId !== "string" ||
+      !sessionId.startsWith("cs_")
+    ) {
+      return res.status(401).json({
+        error: "Valid payment required",
+      });
+    }
+
+    /*
+     * Verify payment directly with Stripe.
+     */
+    const stripe = getStripe();
+
+    const session =
+      await stripe.checkout.sessions.retrieve(
+        sessionId
+      );
+
+    if (session.payment_status !== "paid") {
+      return res.status(402).json({
+        error: "Payment required",
+      });
+    }
+
+    if (!session.metadata?.orderId) {
+      return res.status(400).json({
+        error: "Checkout is missing order information",
+      });
+    }
+
+    if (!process.env.ELEVENLABS_API_KEY) {
+      return res.status(503).json({
+        error: "Music generation not connected",
+      });
+    }
+
+    /*
+     * Payment is confirmed.
+     * Generate the customer's song.
+     */
     const response = await fetch(
       "https://api.elevenlabs.io/v1/music",
       {
@@ -254,12 +267,15 @@ app.post("/api/music", async (req, res) => {
       });
     }
 
-    const audio =
-      Buffer.from(
-        await response.arrayBuffer()
-      );
+    const audio = Buffer.from(
+      await response.arrayBuffer()
+    );
 
-    res.set("content-type", "audio/mpeg");
+    res.set(
+      "content-type",
+      "audio/mpeg"
+    );
+
     res.set(
       "cache-control",
       "private, no-store"
