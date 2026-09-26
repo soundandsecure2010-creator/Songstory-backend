@@ -294,7 +294,98 @@ app.post("/api/music", async (req, res) => {
   }
 });
 /*
- * TEMPORARY CONTROLLED ELEVENLABS TEST
+ * TEMPORARY SINGLE-USE MUSIC TEST
+ * Remove immediately after validation.
+ */
+let musicTestUsed = false;
+
+app.get(
+  "/api/music-test-8f4c2a71",
+  async (req, res) => {
+    try {
+      if (musicTestUsed) {
+        return res.status(410).send(
+          "Test already used."
+        );
+      }
+
+      musicTestUsed = true;
+
+      if (!process.env.ELEVENLABS_API_KEY) {
+        return res.status(503).send(
+          "ElevenLabs is not connected."
+        );
+      }
+
+      const response = await fetch(
+        "https://api.elevenlabs.io/v1/music",
+        {
+          method: "POST",
+
+          headers: {
+            "xi-api-key":
+              process.env.ELEVENLABS_API_KEY,
+
+            "content-type":
+              "application/json",
+          },
+
+          body: JSON.stringify({
+            prompt:
+              "Create a short upbeat pop song celebrating a successful SongStory system test. Original lyrics, energetic vocal, polished production.",
+            music_length_ms: 30000,
+          }),
+        }
+      );
+
+      if (!response.ok) {
+        const details =
+          await response.text().catch(() => "");
+
+        console.error(
+          "CONTROLLED MUSIC TEST FAILED:",
+          response.status,
+          details.slice(0, 500)
+        );
+
+        return res.status(502).send(
+          `ElevenLabs test failed (${response.status}).`
+        );
+      }
+
+      const audio = Buffer.from(
+        await response.arrayBuffer()
+      );
+
+      console.log(
+        "CONTROLLED MUSIC TEST SUCCESS:",
+        audio.length,
+        "bytes"
+      );
+
+      res.set(
+        "content-type",
+        "audio/mpeg"
+      );
+
+      res.set(
+        "cache-control",
+        "no-store"
+      );
+
+      res.send(audio);
+    } catch (error) {
+      console.error(
+        "CONTROLLED MUSIC TEST ERROR:",
+        error
+      );
+
+      res.status(500).send(
+        "Controlled test failed."
+      );
+    }
+  }
+);
  * Remove immediately after validation.
  */
 app.post("/api/test-music", async (req, res) => {
