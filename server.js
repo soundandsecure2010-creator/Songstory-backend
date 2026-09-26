@@ -20,9 +20,9 @@ function getStripe() {
   return new Stripe(process.env.STRIPE_SECRET_KEY);
 }
 
-/* -----------------------------
-   BASIC STATUS
------------------------------- */
+/* =========================
+   STATUS
+========================= */
 
 app.get("/", (req, res) => {
   res.json({
@@ -40,9 +40,9 @@ app.get("/health", (req, res) => {
   });
 });
 
-/* -----------------------------
-   CREATE STRIPE CHECKOUT
------------------------------- */
+/* =========================
+   STRIPE CHECKOUT
+========================= */
 
 app.post("/api/checkout", async (req, res) => {
   try {
@@ -129,9 +129,9 @@ app.post("/api/checkout", async (req, res) => {
   }
 });
 
-/* -----------------------------
-   VERIFY STRIPE PAYMENT
------------------------------- */
+/* =========================
+   VERIFY PAYMENT
+========================= */
 
 app.post(
   "/api/checkout/verify",
@@ -181,9 +181,94 @@ app.post(
   }
 );
 
-/* -----------------------------
+/* =========================
+   ELEVENLABS HELPER
+========================= */
+
+async function requestMusic(
+  prompt,
+  musicLengthMs
+) {
+  if (!process.env.ELEVENLABS_API_KEY) {
+    throw new Error(
+      "ELEVENLABS_NOT_CONNECTED"
+    );
+  }
+
+  const response = await fetch(
+    "https://api.elevenlabs.io/v1/music",
+    {
+      method: "POST",
+
+      headers: {
+        "xi-api-key":
+          process.env.ELEVENLABS_API_KEY,
+
+        "content-type":
+          "application/json",
+      },
+
+      body: JSON.stringify({
+        prompt,
+        music_length_ms: musicLengthMs,
+      }),
+    }
+  );
+
+  if (!response.ok) {
+    const details =
+      await response
+        .text()
+        .catch(() => "");
+
+    console.error(
+      "ELEVENLABS FAILURE:",
+      response.status,
+      details.slice(0, 1000)
+    );
+
+    const error =
+      new Error("ELEVENLABS_FAILED");
+
+    error.providerStatus =
+      response.status;
+
+    throw error;
+  }
+
+  const audio = Buffer.from(
+    await response.arrayBuffer()
+  );
+
+  const contentType =
+    response.headers.get(
+      "content-type"
+    ) ||
+    "application/octet-stream";
+
+  const firstBytes =
+    audio
+      .subarray(0, 24)
+      .toString("hex");
+
+  console.log(
+    "ELEVENLABS AUDIO RESPONSE:",
+    {
+      bytes: audio.length,
+      contentType,
+      firstBytes,
+    }
+  );
+
+  return {
+    audio,
+    contentType,
+  };
+}
+
+/* =========================
    PAID MUSIC GENERATION
------------------------------- */
+========================= */
 
 app.post("/api/music", async (req, res) => {
   try {
@@ -211,8 +296,8 @@ app.post("/api/music", async (req, res) => {
     }
 
     /*
-     * Verify the payment directly
-     * with Stripe before spending
+     * Verify payment directly
+     * with Stripe before using
      * ElevenLabs credits.
      */
 
@@ -247,51 +332,22 @@ app.post("/api/music", async (req, res) => {
       });
     }
 
-    const response = await fetch(
-      "https://api.elevenlabs.io/v1/music",
-      {
-        method: "POST",
-
-        headers: {
-          "xi-api-key":
-            process.env.ELEVENLABS_API_KEY,
-
-          "content-type":
-            "application/json",
-        },
-
-        body: JSON.stringify({
-          prompt,
-          music_length_ms: 180000,
-        }),
-      }
-    );
-
-    if (!response.ok) {
-      const details =
-        await response
-          .text()
-          .catch(() => "");
-
-      console.error(
-        "ElevenLabs error:",
-        response.status,
-        details.slice(0, 500)
-      );
-
-      return res.status(502).json({
-        error: "Music provider failed",
-        status: response.status,
-      });
-    }
-
-    const audio = Buffer.from(
-      await response.arrayBuffer()
+    const {
+      audio,
+      contentType,
+    } = await requestMusic(
+      prompt,
+      180000
     );
 
     res.set(
       "content-type",
-      "audio/mpeg"
+      contentType
+    );
+
+    res.set(
+      "content-length",
+      String(audio.length)
     );
 
     res.set(
@@ -306,20 +362,38 @@ app.post("/api/music", async (req, res) => {
       error
     );
 
+    if (
+      error?.message ===
+      "ELEVENLABS_NOT_CONNECTED"
+    ) {
+      return res.status(503).json({
+        error:
+          "Music generation not connected",
+      });
+    }
+
+    if (
+      error?.message ===
+      "ELEVENLABS_FAILED"
+    ) {
+      return res.status(502).json({
+        error:
+          "Music provider failed",
+        status:
+          error.providerStatus || 502,
+      });
+    }
+
     res.status(500).json({
-      error: "Music generation failed",
+      error:
+        "Music generation failed",
     });
   }
 });
 
-/* -----------------------------
+/* =========================
    TEMPORARY CONTROLLED TEST
-
-   This route generates ONE
-   30-second test song.
-
-   REMOVE AFTER TESTING.
------------------------------- */
+========================= */
 
 let musicTestUsed = false;
 
@@ -330,19 +404,22 @@ app.get(
       if (musicTestUsed) {
         return res
           .status(410)
-          .send("Test already used.");
+          .send(
+            "Test already used."
+          );
       }
 
       /*
-       * Lock immediately so a second
-       * request cannot generate another
-       * song while the first is running.
+       * Lock immediately so the
+       * browser cannot accidentally
+       * generate twice.
        */
 
       musicTestUsed = true;
 
       if (
-        !process.env.ELEVENLABS_API_KEY
+        !process.env
+          .ELEVENLABS_API_KEY
       ) {
         return res
           .status(503)
@@ -351,61 +428,30 @@ app.get(
           );
       }
 
-      const response = await fetch(
-        "https://api.elevenlabs.io/v1/music",
-        {
-          method: "POST",
-
-          headers: {
-            "xi-api-key":
-              process.env
-                .ELEVENLABS_API_KEY,
-
-            "content-type":
-              "application/json",
-          },
-
-          body: JSON.stringify({
-            prompt:
-              "Create a short upbeat pop song celebrating a successful SongStory system test. Use original lyrics, an energetic vocal, and polished production.",
-
-            music_length_ms: 30000,
-          }),
-        }
-      );
-
-      if (!response.ok) {
-        const details =
-          await response
-            .text()
-            .catch(() => "");
-
-        console.error(
-          "CONTROLLED MUSIC TEST FAILED:",
-          response.status,
-          details.slice(0, 500)
-        );
-
-        return res
-          .status(502)
-          .send(
-            `ElevenLabs test failed (${response.status}).`
-          );
-      }
-
-      const audio = Buffer.from(
-        await response.arrayBuffer()
+      const {
+        audio,
+        contentType,
+      } = await requestMusic(
+        "Create a short upbeat pop song celebrating a successful SongStory system test. Use original lyrics, an energetic vocal, and polished production.",
+        30000
       );
 
       console.log(
         "CONTROLLED MUSIC TEST SUCCESS:",
         audio.length,
-        "bytes"
+        "bytes",
+        "type:",
+        contentType
       );
 
       res.set(
         "content-type",
-        "audio/mpeg"
+        contentType
+      );
+
+      res.set(
+        "content-length",
+        String(audio.length)
       );
 
       res.set(
@@ -413,9 +459,16 @@ app.get(
         "no-store"
       );
 
+      /*
+       * Don't falsely call it .mp3.
+       * Let the browser use the
+       * format ElevenLabs actually
+       * returned.
+       */
+
       res.set(
         "content-disposition",
-        'inline; filename="songstory-test.mp3"'
+        'inline; filename="songstory-test-audio"'
       );
 
       res.send(audio);
@@ -424,6 +477,17 @@ app.get(
         "CONTROLLED MUSIC TEST ERROR:",
         error
       );
+
+      if (
+        error?.message ===
+        "ELEVENLABS_FAILED"
+      ) {
+        return res
+          .status(502)
+          .send(
+            `ElevenLabs test failed (${error.providerStatus || 502}).`
+          );
+      }
 
       res
         .status(500)
@@ -434,9 +498,9 @@ app.get(
   }
 );
 
-/* -----------------------------
+/* =========================
    START SERVER
------------------------------- */
+========================= */
 
 app.listen(port, () => {
   console.log(
