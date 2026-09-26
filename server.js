@@ -293,7 +293,90 @@ app.post("/api/music", async (req, res) => {
     });
   }
 });
+/*
+ * TEMPORARY CONTROLLED ELEVENLABS TEST
+ * Remove immediately after validation.
+ */
+app.post("/api/test-music", async (req, res) => {
+  try {
+    const { testToken } = req.body || {};
 
+    if (
+      !process.env.MUSIC_TEST_TOKEN ||
+      testToken !== process.env.MUSIC_TEST_TOKEN
+    ) {
+      return res.status(401).json({
+        error: "Unauthorized",
+      });
+    }
+
+    if (!process.env.ELEVENLABS_API_KEY) {
+      return res.status(503).json({
+        error: "ElevenLabs not connected",
+      });
+    }
+
+    const response = await fetch(
+      "https://api.elevenlabs.io/v1/music",
+      {
+        method: "POST",
+
+        headers: {
+          "xi-api-key":
+            process.env.ELEVENLABS_API_KEY,
+
+          "content-type": "application/json",
+        },
+
+        body: JSON.stringify({
+          prompt:
+            "Create a short upbeat pop song celebrating a successful SongStory system test. Original lyrics, energetic vocal, polished production.",
+          music_length_ms: 30000,
+        }),
+      }
+    );
+
+    if (!response.ok) {
+      const details =
+        await response.text().catch(() => "");
+
+      console.error(
+        "Controlled ElevenLabs test failed:",
+        response.status,
+        details.slice(0, 500)
+      );
+
+      return res.status(502).json({
+        ok: false,
+        providerStatus: response.status,
+      });
+    }
+
+    const audio = Buffer.from(
+      await response.arrayBuffer()
+    );
+
+    console.log(
+      "CONTROLLED MUSIC TEST SUCCESS:",
+      audio.length,
+      "bytes"
+    );
+
+    res.json({
+      ok: true,
+      audioBytes: audio.length,
+    });
+  } catch (error) {
+    console.error(
+      "Controlled music test error:",
+      error
+    );
+
+    res.status(500).json({
+      ok: false,
+    });
+  }
+});
 app.listen(port, () => {
   console.log(
     `SongStory backend listening on ${port}`
