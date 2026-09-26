@@ -20,6 +20,10 @@ function getStripe() {
   return new Stripe(process.env.STRIPE_SECRET_KEY);
 }
 
+/* -----------------------------
+   BASIC STATUS
+------------------------------ */
+
 app.get("/", (req, res) => {
   res.json({
     ok: true,
@@ -36,9 +40,10 @@ app.get("/health", (req, res) => {
   });
 });
 
-/*
- * CREATE CHECKOUT
- */
+/* -----------------------------
+   CREATE STRIPE CHECKOUT
+------------------------------ */
+
 app.post("/api/checkout", async (req, res) => {
   try {
     const {
@@ -113,7 +118,10 @@ app.post("/api/checkout", async (req, res) => {
       url: session.url,
     });
   } catch (error) {
-    console.error("Stripe checkout error:", error);
+    console.error(
+      "Stripe checkout error:",
+      error
+    );
 
     res.status(500).json({
       error: "Could not create checkout",
@@ -121,59 +129,62 @@ app.post("/api/checkout", async (req, res) => {
   }
 });
 
-/*
- * VERIFY PAYMENT
- */
-app.post("/api/checkout/verify", async (req, res) => {
-  try {
-    const { sessionId } = req.body || {};
+/* -----------------------------
+   VERIFY STRIPE PAYMENT
+------------------------------ */
 
-    if (
-      typeof sessionId !== "string" ||
-      !sessionId.startsWith("cs_")
-    ) {
-      return res.status(400).json({
-        error: "Invalid checkout session",
+app.post(
+  "/api/checkout/verify",
+  async (req, res) => {
+    try {
+      const { sessionId } = req.body || {};
+
+      if (
+        typeof sessionId !== "string" ||
+        !sessionId.startsWith("cs_")
+      ) {
+        return res.status(400).json({
+          error: "Invalid checkout session",
+        });
+      }
+
+      const stripe = getStripe();
+
+      const session =
+        await stripe.checkout.sessions.retrieve(
+          sessionId
+        );
+
+      res.json({
+        paid:
+          session.payment_status === "paid",
+
+        orderId:
+          session.metadata?.orderId || null,
+
+        token:
+          session.metadata?.token || null,
+
+        package:
+          session.metadata?.package || null,
       });
-    }
-
-    const stripe = getStripe();
-
-    const session =
-      await stripe.checkout.sessions.retrieve(
-        sessionId
+    } catch (error) {
+      console.error(
+        "Stripe verification error:",
+        error
       );
 
-    res.json({
-      paid: session.payment_status === "paid",
-
-      orderId:
-        session.metadata?.orderId || null,
-
-      token:
-        session.metadata?.token || null,
-
-      package:
-        session.metadata?.package || null,
-    });
-  } catch (error) {
-    console.error(
-      "Stripe verification error:",
-      error
-    );
-
-    res.status(500).json({
-      error: "Could not verify payment",
-    });
+      res.status(500).json({
+        error: "Could not verify payment",
+      });
+    }
   }
-});
+);
 
-/*
- * GENERATE SONG
- *
- * A valid PAID Stripe Checkout Session
- * is required before ElevenLabs is called.
- */
+/* -----------------------------
+   PAID MUSIC GENERATION
+------------------------------ */
+
 app.post("/api/music", async (req, res) => {
   try {
     const {
@@ -200,8 +211,11 @@ app.post("/api/music", async (req, res) => {
     }
 
     /*
-     * Verify payment directly with Stripe.
+     * Verify the payment directly
+     * with Stripe before spending
+     * ElevenLabs credits.
      */
+
     const stripe = getStripe();
 
     const session =
@@ -209,7 +223,9 @@ app.post("/api/music", async (req, res) => {
         sessionId
       );
 
-    if (session.payment_status !== "paid") {
+    if (
+      session.payment_status !== "paid"
+    ) {
       return res.status(402).json({
         error: "Payment required",
       });
@@ -217,20 +233,20 @@ app.post("/api/music", async (req, res) => {
 
     if (!session.metadata?.orderId) {
       return res.status(400).json({
-        error: "Checkout is missing order information",
+        error:
+          "Checkout is missing order information",
       });
     }
 
-    if (!process.env.ELEVENLABS_API_KEY) {
+    if (
+      !process.env.ELEVENLABS_API_KEY
+    ) {
       return res.status(503).json({
-        error: "Music generation not connected",
+        error:
+          "Music generation not connected",
       });
     }
 
-    /*
-     * Payment is confirmed.
-     * Generate the customer's song.
-     */
     const response = await fetch(
       "https://api.elevenlabs.io/v1/music",
       {
@@ -253,7 +269,9 @@ app.post("/api/music", async (req, res) => {
 
     if (!response.ok) {
       const details =
-        await response.text().catch(() => "");
+        await response
+          .text()
+          .catch(() => "");
 
       console.error(
         "ElevenLabs error:",
@@ -293,10 +311,16 @@ app.post("/api/music", async (req, res) => {
     });
   }
 });
-/*
- * TEMPORARY SINGLE-USE MUSIC TEST
- * Remove immediately after validation.
- */
+
+/* -----------------------------
+   TEMPORARY CONTROLLED TEST
+
+   This route generates ONE
+   30-second test song.
+
+   REMOVE AFTER TESTING.
+------------------------------ */
+
 let musicTestUsed = false;
 
 app.get(
@@ -304,17 +328,27 @@ app.get(
   async (req, res) => {
     try {
       if (musicTestUsed) {
-        return res.status(410).send(
-          "Test already used."
-        );
+        return res
+          .status(410)
+          .send("Test already used.");
       }
+
+      /*
+       * Lock immediately so a second
+       * request cannot generate another
+       * song while the first is running.
+       */
 
       musicTestUsed = true;
 
-      if (!process.env.ELEVENLABS_API_KEY) {
-        return res.status(503).send(
-          "ElevenLabs is not connected."
-        );
+      if (
+        !process.env.ELEVENLABS_API_KEY
+      ) {
+        return res
+          .status(503)
+          .send(
+            "ElevenLabs is not connected."
+          );
       }
 
       const response = await fetch(
@@ -324,7 +358,8 @@ app.get(
 
           headers: {
             "xi-api-key":
-              process.env.ELEVENLABS_API_KEY,
+              process.env
+                .ELEVENLABS_API_KEY,
 
             "content-type":
               "application/json",
@@ -332,7 +367,8 @@ app.get(
 
           body: JSON.stringify({
             prompt:
-              "Create a short upbeat pop song celebrating a successful SongStory system test. Original lyrics, energetic vocal, polished production.",
+              "Create a short upbeat pop song celebrating a successful SongStory system test. Use original lyrics, an energetic vocal, and polished production.",
+
             music_length_ms: 30000,
           }),
         }
@@ -340,7 +376,9 @@ app.get(
 
       if (!response.ok) {
         const details =
-          await response.text().catch(() => "");
+          await response
+            .text()
+            .catch(() => "");
 
         console.error(
           "CONTROLLED MUSIC TEST FAILED:",
@@ -348,9 +386,11 @@ app.get(
           details.slice(0, 500)
         );
 
-        return res.status(502).send(
-          `ElevenLabs test failed (${response.status}).`
-        );
+        return res
+          .status(502)
+          .send(
+            `ElevenLabs test failed (${response.status}).`
+          );
       }
 
       const audio = Buffer.from(
@@ -373,6 +413,11 @@ app.get(
         "no-store"
       );
 
+      res.set(
+        "content-disposition",
+        'inline; filename="songstory-test.mp3"'
+      );
+
       res.send(audio);
     } catch (error) {
       console.error(
@@ -380,94 +425,19 @@ app.get(
         error
       );
 
-      res.status(500).send(
-        "Controlled test failed."
-      );
+      res
+        .status(500)
+        .send(
+          "Controlled test failed."
+        );
     }
   }
 );
- * Remove immediately after validation.
- */
-app.post("/api/test-music", async (req, res) => {
-  try {
-    const { testToken } = req.body || {};
 
-    if (
-      !process.env.MUSIC_TEST_TOKEN ||
-      testToken !== process.env.MUSIC_TEST_TOKEN
-    ) {
-      return res.status(401).json({
-        error: "Unauthorized",
-      });
-    }
+/* -----------------------------
+   START SERVER
+------------------------------ */
 
-    if (!process.env.ELEVENLABS_API_KEY) {
-      return res.status(503).json({
-        error: "ElevenLabs not connected",
-      });
-    }
-
-    const response = await fetch(
-      "https://api.elevenlabs.io/v1/music",
-      {
-        method: "POST",
-
-        headers: {
-          "xi-api-key":
-            process.env.ELEVENLABS_API_KEY,
-
-          "content-type": "application/json",
-        },
-
-        body: JSON.stringify({
-          prompt:
-            "Create a short upbeat pop song celebrating a successful SongStory system test. Original lyrics, energetic vocal, polished production.",
-          music_length_ms: 30000,
-        }),
-      }
-    );
-
-    if (!response.ok) {
-      const details =
-        await response.text().catch(() => "");
-
-      console.error(
-        "Controlled ElevenLabs test failed:",
-        response.status,
-        details.slice(0, 500)
-      );
-
-      return res.status(502).json({
-        ok: false,
-        providerStatus: response.status,
-      });
-    }
-
-    const audio = Buffer.from(
-      await response.arrayBuffer()
-    );
-
-    console.log(
-      "CONTROLLED MUSIC TEST SUCCESS:",
-      audio.length,
-      "bytes"
-    );
-
-    res.json({
-      ok: true,
-      audioBytes: audio.length,
-    });
-  } catch (error) {
-    console.error(
-      "Controlled music test error:",
-      error
-    );
-
-    res.status(500).json({
-      ok: false,
-    });
-  }
-});
 app.listen(port, () => {
   console.log(
     `SongStory backend listening on ${port}`
