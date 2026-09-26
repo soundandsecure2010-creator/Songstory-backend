@@ -130,7 +130,7 @@ app.post("/api/checkout", async (req, res) => {
 });
 
 /* =========================
-   VERIFY PAYMENT
+   VERIFY STRIPE PAYMENT
 ========================= */
 
 app.post(
@@ -182,7 +182,7 @@ app.post(
 );
 
 /* =========================
-   ELEVENLABS HELPER
+   ELEVENLABS MUSIC
 ========================= */
 
 async function requestMusic(
@@ -222,9 +222,9 @@ async function requestMusic(
         .catch(() => "");
 
     console.error(
-      "ELEVENLABS FAILURE:",
+      "ElevenLabs music failure:",
       response.status,
-      details.slice(0, 1000)
+      details.slice(0, 500)
     );
 
     const error =
@@ -243,21 +243,13 @@ async function requestMusic(
   const contentType =
     response.headers.get(
       "content-type"
-    ) ||
-    "application/octet-stream";
-
-  const firstBytes =
-    audio
-      .subarray(0, 24)
-      .toString("hex");
+    ) || "audio/mpeg";
 
   console.log(
-    "ELEVENLABS AUDIO RESPONSE:",
-    {
-      bytes: audio.length,
-      contentType,
-      firstBytes,
-    }
+    "SongStory music generated:",
+    audio.length,
+    "bytes",
+    contentType
   );
 
   return {
@@ -267,7 +259,7 @@ async function requestMusic(
 }
 
 /* =========================
-   PAID MUSIC GENERATION
+   PAID SONG GENERATION
 ========================= */
 
 app.post("/api/music", async (req, res) => {
@@ -296,9 +288,9 @@ app.post("/api/music", async (req, res) => {
     }
 
     /*
-     * Verify payment directly
-     * with Stripe before using
-     * ElevenLabs credits.
+     * Verify the Checkout Session
+     * directly with Stripe before
+     * spending ElevenLabs credits.
      */
 
     const stripe = getStripe();
@@ -320,15 +312,6 @@ app.post("/api/music", async (req, res) => {
       return res.status(400).json({
         error:
           "Checkout is missing order information",
-      });
-    }
-
-    if (
-      !process.env.ELEVENLABS_API_KEY
-    ) {
-      return res.status(503).json({
-        error:
-          "Music generation not connected",
       });
     }
 
@@ -355,6 +338,11 @@ app.post("/api/music", async (req, res) => {
       "private, no-store"
     );
 
+    res.set(
+      "x-content-type-options",
+      "nosniff"
+    );
+
     res.send(audio);
   } catch (error) {
     console.error(
@@ -379,6 +367,7 @@ app.post("/api/music", async (req, res) => {
       return res.status(502).json({
         error:
           "Music provider failed",
+
         status:
           error.providerStatus || 502,
       });
@@ -390,113 +379,6 @@ app.post("/api/music", async (req, res) => {
     });
   }
 });
-
-/* =========================
-   TEMPORARY CONTROLLED TEST
-========================= */
-
-let musicTestUsed = false;
-
-app.get(
-  "/api/music-test-8f4c2a71",
-  async (req, res) => {
-    try {
-      if (musicTestUsed) {
-        return res
-          .status(410)
-          .send(
-            "Test already used."
-          );
-      }
-
-      /*
-       * Lock immediately so the
-       * browser cannot accidentally
-       * generate twice.
-       */
-
-      musicTestUsed = true;
-
-      if (
-        !process.env
-          .ELEVENLABS_API_KEY
-      ) {
-        return res
-          .status(503)
-          .send(
-            "ElevenLabs is not connected."
-          );
-      }
-
-      const {
-        audio,
-        contentType,
-      } = await requestMusic(
-        "Create a short upbeat pop song celebrating a successful SongStory system test. Use original lyrics, an energetic vocal, and polished production.",
-        30000
-      );
-
-      console.log(
-        "CONTROLLED MUSIC TEST SUCCESS:",
-        audio.length,
-        "bytes",
-        "type:",
-        contentType
-      );
-
-      res.set(
-        "content-type",
-        contentType
-      );
-
-      res.set(
-        "content-length",
-        String(audio.length)
-      );
-
-      res.set(
-        "cache-control",
-        "no-store"
-      );
-
-      /*
-       * Don't falsely call it .mp3.
-       * Let the browser use the
-       * format ElevenLabs actually
-       * returned.
-       */
-
-      res.set(
-        "content-disposition",
-        'inline; filename="songstory-test-audio"'
-      );
-
-      res.send(audio);
-    } catch (error) {
-      console.error(
-        "CONTROLLED MUSIC TEST ERROR:",
-        error
-      );
-
-      if (
-        error?.message ===
-        "ELEVENLABS_FAILED"
-      ) {
-        return res
-          .status(502)
-          .send(
-            `ElevenLabs test failed (${error.providerStatus || 502}).`
-          );
-      }
-
-      res
-        .status(500)
-        .send(
-          "Controlled test failed."
-        );
-    }
-  }
-);
 
 /* =========================
    START SERVER
