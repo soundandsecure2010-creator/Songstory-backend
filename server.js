@@ -6,12 +6,18 @@ const port = process.env.PORT || 10000;
 
 const SITE_URL =
   process.env.PUBLIC_SITE_URL ||
-  "https://songstory-studio.higgsfield.app";
+  "https://songami.higgsfield.app";
 
 const prices = {
   standard: 3900,
   premium: 6900,
   rush: 9900,
+};
+
+const packageNames = {
+  standard: "Songami — 1 personalized song",
+  premium: "Songami — 2 personalized songs",
+  rush: "Songami — 3 personalized songs",
 };
 
 app.use(express.json({ limit: "1mb" }));
@@ -55,20 +61,23 @@ function escapeHtml(value = "") {
 app.get("/", (req, res) => {
   res.json({
     ok: true,
-    service: "SongStory Backend",
+    service: "Songami Backend",
   });
 });
 
 app.get("/health", (req, res) => {
   res.json({
     ok: true,
-    service: "songstory-backend",
+    service: "songami-backend",
+
     stripe: Boolean(
       process.env.STRIPE_SECRET_KEY
     ),
+
     music: Boolean(
       process.env.ELEVENLABS_API_KEY
     ),
+
     email: Boolean(
       process.env.RESEND_API_KEY
     ),
@@ -110,14 +119,9 @@ async function sendEmail({
       },
 
       body: JSON.stringify({
-        /*
-         * Resend's onboarding sender works
-         * before a custom SongStory domain
-         * is connected.
-         */
         from:
           process.env.EMAIL_FROM ||
-          "SongStory <onboarding@resend.dev>",
+          "Songami <onboarding@resend.dev>",
 
         to: [to],
 
@@ -153,7 +157,7 @@ async function sendEmail({
     await response.json();
 
   console.log(
-    "SongStory email sent:",
+    "Songami email sent:",
     result?.id || "accepted"
   );
 
@@ -220,11 +224,7 @@ app.post(
 
                 product_data: {
                   name:
-                    "SongStory " +
-                    pkg
-                      .charAt(0)
-                      .toUpperCase() +
-                    pkg.slice(1),
+                    packageNames[pkg],
                 },
               },
 
@@ -419,7 +419,7 @@ async function requestMusic(
     ) || "audio/mpeg";
 
   console.log(
-    "SongStory music generated:",
+    "Songami music generated:",
     audio.length,
     "bytes",
     contentType
@@ -471,12 +471,6 @@ app.post(
               "Valid payment required",
           });
       }
-
-      /*
-       * Verify payment directly
-       * with Stripe before using
-       * ElevenLabs credits.
-       */
 
       const stripe =
         getStripe();
@@ -615,14 +609,6 @@ app.post(
           });
       }
 
-      /*
-       * This prevents the endpoint
-       * from becoming an open email
-       * relay. A real paid Stripe
-       * session must match this
-       * private order token.
-       */
-
       const stripe =
         getStripe();
 
@@ -659,22 +645,22 @@ app.post(
         to: email,
 
         subject:
-          "Your SongStory order is confirmed",
+          "Your Songami order is confirmed",
 
         html: `
           <div style="font-family:Arial,sans-serif;max-width:600px;margin:auto;color:#171717">
-            <h1>SongStory</h1>
+            <h1>Songami</h1>
 
             <p>Your payment is confirmed.</p>
 
             <p>
-              We're creating your personalized song for
+              We're creating your personalized Songami for
               <strong>${safeRecipient}</strong>.
             </p>
 
             <p>
               Keep this private link. It is where you can
-              check your order and download your finished song.
+              check your order and download your finished song or songs.
             </p>
 
             <p style="margin:28px 0">
@@ -682,7 +668,7 @@ app.post(
                 href="${orderUrl}"
                 style="background:#171717;color:#fff;padding:12px 18px;text-decoration:none;border-radius:8px"
               >
-                Open your SongStory order
+                Open your Songami order
               </a>
             </p>
 
@@ -742,11 +728,6 @@ app.post(
           });
       }
 
-      /*
-       * Again verify the Stripe
-       * payment and private token.
-       */
-
       const stripe =
         getStripe();
 
@@ -783,21 +764,21 @@ app.post(
         to: email,
 
         subject:
-          "Your SongStory is ready 🎵",
+          "Your Songami is ready 🎵",
 
         html: `
           <div style="font-family:Arial,sans-serif;max-width:600px;margin:auto;color:#171717">
-            <h1>Your song is ready.</h1>
+            <h1>Your Songami is ready.</h1>
 
             <p>
-              Your personalized SongStory for
+              Your personalized Songami for
               <strong>${safeRecipient}</strong>
               is finished.
             </p>
 
             <p>
               Use your private order page to download
-              the finished MP3.
+              every finished MP3 included in your order.
             </p>
 
             <p style="margin:28px 0">
@@ -805,7 +786,7 @@ app.post(
                 href="${orderUrl}"
                 style="background:#171717;color:#fff;padding:12px 18px;text-decoration:none;border-radius:8px"
               >
-                Download your SongStory
+                Download your Songami
               </a>
             </p>
 
@@ -839,6 +820,6 @@ app.post(
 
 app.listen(port, () => {
   console.log(
-    `SongStory backend listening on ${port}`
+    `Songami backend listening on ${port}`
   );
 });
