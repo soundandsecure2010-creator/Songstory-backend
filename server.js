@@ -27,7 +27,9 @@ function getStripe() {
     throw new Error("Payments not connected");
   }
 
-  return new Stripe(process.env.STRIPE_SECRET_KEY);
+  return new Stripe(
+    process.env.STRIPE_SECRET_KEY
+  );
 }
 
 function validEmail(value) {
@@ -472,6 +474,12 @@ app.post(
           });
       }
 
+      /*
+       * Verify the Stripe payment
+       * before using ElevenLabs
+       * credits for customer orders.
+       */
+
       const stripe =
         getStripe();
 
@@ -608,6 +616,12 @@ app.post(
               "Invalid email request",
           });
       }
+
+      /*
+       * Require a real paid Stripe
+       * session matching the private
+       * order token.
+       */
 
       const stripe =
         getStripe();
@@ -809,6 +823,127 @@ app.post(
       res.status(500).json({
         error:
           "Could not send finished-song email",
+      });
+    }
+  }
+);
+
+/* =========================
+   PRIVATE DEMO GENERATION
+========================= */
+
+app.post(
+  "/api/demo/music",
+  async (req, res) => {
+    try {
+      const secret =
+        req.headers["x-demo-secret"];
+
+      /*
+       * This endpoint intentionally
+       * bypasses Stripe only for
+       * private Songami showcase
+       * generation.
+       *
+       * The secret lives in Render,
+       * never in the website.
+       */
+
+      if (
+        !process.env.DEMO_SECRET ||
+        secret !==
+          process.env.DEMO_SECRET
+      ) {
+        return res
+          .status(403)
+          .json({
+            error: "Forbidden",
+          });
+      }
+
+      const {
+        prompt,
+      } = req.body || {};
+
+      if (
+        typeof prompt !== "string" ||
+        prompt.length < 20 ||
+        prompt.length > 5000
+      ) {
+        return res
+          .status(400)
+          .json({
+            error:
+              "Invalid prompt",
+          });
+      }
+
+      const {
+        audio,
+        contentType,
+      } = await requestMusic(
+        prompt,
+        180000
+      );
+
+      res.set(
+        "content-type",
+        contentType
+      );
+
+      res.set(
+        "content-length",
+        String(audio.length)
+      );
+
+      res.set(
+        "cache-control",
+        "private, no-store"
+      );
+
+      res.set(
+        "x-content-type-options",
+        "nosniff"
+      );
+
+      res.send(audio);
+    } catch (error) {
+      console.error(
+        "Demo generation error:",
+        error
+      );
+
+      if (
+        error?.message ===
+        "ELEVENLABS_NOT_CONNECTED"
+      ) {
+        return res
+          .status(503)
+          .json({
+            error:
+              "Music generation not connected",
+          });
+      }
+
+      if (
+        error?.message ===
+        "ELEVENLABS_FAILED"
+      ) {
+        return res
+          .status(502)
+          .json({
+            error:
+              "Music provider failed",
+
+            status:
+              error.providerStatus ||
+              502,
+          });
+      }
+
+      res.status(500).json({
+        error:
+          "Demo generation failed",
       });
     }
   }
